@@ -23,15 +23,40 @@ class Projection(object):
         """
 
         ### TODO ###
+        K = self.intrinsic(fov)
+        K_inverse = np.linalg.inv(K)
+        T = np.array([[1, 0, 0, 0],
+                      [0, 0, 1, -1.5],
+                      [0, -1, 0, 0]])
+
+        new_pixels = []
+        for p in points:
+            p = np.vstack((p[0], p[1], 1))
+            BEV_coor = K_inverse @ p * 2.5
+            BEV_coor = np.vstack((BEV_coor, 1))
+
+            front_coor = T @ BEV_coor
+            front_coor = K @ front_coor
+            front_coor /= front_coor[2]
+            new_pixels.append(front_coor[:2].ravel())
+
         return new_pixels
+
+    def intrinsic(self, fov):
+        fov = fov / 180 * np.pi
+        f = self.width / (2 * np.tan(fov / 2.))
+
+        return np.array([[f, 0, self.width/2],
+                         [0, f, self.height/2],
+                         [0, 0, 1]])
+
 
     def show_image(self, new_pixels, img_name='projection.png', color=(0, 0, 255), alpha=0.4):
         """
             Show the projection result and fill the selected area on perspective(front) view image.
         """
-
         new_image = cv2.fillPoly(
-            self.image.copy(), [np.array(new_pixels)], color)
+            self.image.copy(), np.int32([np.array(new_pixels)]), color)
         new_image = cv2.addWeighted(
             new_image, alpha, self.image, (1 - alpha), 0)
 
@@ -69,18 +94,18 @@ def click_event(event, x, y, flags, params):
 
 if __name__ == "__main__":
 
+
     pitch_ang = -90
+    for i in range(3):
+        front_rgb = "data/task1/front_view_" + str(i+1) + ".png"
+        top_rgb = "data/task1/bev_view_" + str(i+1) +".png"
+        # click the pixels on window
+        img = cv2.imread(top_rgb, 1)
+        cv2.imshow('image', img)
+        cv2.setMouseCallback('image', click_event)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-    front_rgb = "front_view_path.png"
-    top_rgb = "top_view_path.png"
-
-    # click the pixels on window
-    img = cv2.imread(top_rgb, 1)
-    cv2.imshow('image', img)
-    cv2.setMouseCallback('image', click_event)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    projection = Projection(front_rgb, points)
-    new_pixels = projection.top_to_front(theta=pitch_ang)
-    projection.show_image(new_pixels)
+        projection = Projection(front_rgb, points)
+        new_pixels = projection.top_to_front(theta=pitch_ang)
+        projection.show_image(new_pixels)
