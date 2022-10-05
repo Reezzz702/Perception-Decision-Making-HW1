@@ -4,6 +4,8 @@ import numpy as np
 import habitat_sim
 from habitat_sim.utils.common import d3_40_colors_rgb
 import cv2
+import os
+import csv
 
 
 # This is the scene we are going to load.
@@ -122,8 +124,11 @@ print(" d for trun right  ")
 print(" f for finish and quit the program")
 print("#############################")
 
+count = 0
+GT_pose = []
 
 def navigateAndSee(action=""):
+    global count, GT_pose
     observations = sim.step(action)
     #print("action: ", action)
 
@@ -134,12 +139,23 @@ def navigateAndSee(action=""):
     sensor_state = agent_state.sensor_states['color_sensor']
     print("camera pose: x y z rw rx ry rz")
     print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2],  sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
+    cv2.imwrite(f"data/task2/rgb/rgb_{count}.png", transform_rgb_bgr(observations["color_sensor"]))
+    cv2.imwrite(f"data/task2/depth/depth_{count}.png", transform_depth(observations["depth_sensor"]))
+    cv2.imwrite(f"data/task2/semantic/semantic_{count}.png", transform_semantic(observations["semantic_sensor"]))
+    count += 1
+
+    pos = [sensor_state.position[0],sensor_state.position[1],sensor_state.position[2],  sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z]
+    GT_pose.append(pos)
+
 
 if not os.path.exists("data/"):
     os.makedirs("data/")
-
-if not os.path.exists("data/task2"):
     os.makedirs("data/task2")
+    os.makedirs("data/task2/GT")
+    os.makedirs("data/task2/rgb")
+    os.makedirs("data/task2/depth")
+    os.makedirs("data/task2/semantic")
+
 
 action = "move_forward"
 navigateAndSee(action)
@@ -164,3 +180,12 @@ while True:
     else:
         print("INVALID KEY")
         continue
+
+
+print(GT_pose[0])
+with open("data/task2/GT/GT.csv", 'w', newline = '') as f:
+    writer = csv.writer(f)
+    writer.writerow(['x', 'y', 'z', 'rw', 'rx', 'ry', 'rz'])
+    for i in GT_pose:
+        writer.writerow(i)
+    f.close()
