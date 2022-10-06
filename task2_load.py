@@ -144,7 +144,7 @@ def navigateAndSee(action=""):
     cv2.imwrite(f"data/task2/semantic/semantic_{count}.png", transform_semantic(observations["semantic_sensor"]))
     count += 1
 
-    pos = [sensor_state.position[0],sensor_state.position[1],sensor_state.position[2],  sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z]
+    pos = [sensor_state.position[0],sensor_state.position[1],sensor_state.position[2]]
     GT_pose.append(pos)
 
 
@@ -156,6 +156,12 @@ if not os.path.exists("data/"):
     os.makedirs("data/task2/depth")
     os.makedirs("data/task2/semantic")
 
+if not os.path.exists('data/task2'):
+    os.makedirs("data/task2")
+    os.makedirs("data/task2/GT")
+    os.makedirs("data/task2/rgb")
+    os.makedirs("data/task2/depth")
+    os.makedirs("data/task2/semantic")    
 
 action = "move_forward"
 navigateAndSee(action)
@@ -185,7 +191,7 @@ while True:
 print(GT_pose[0])
 with open("data/task2/GT/GT.csv", 'w', newline = '') as f:
     writer = csv.writer(f)
-    writer.writerow(['x', 'y', 'z', 'rw', 'rx', 'ry', 'rz'])
+    writer.writerow(['x', 'y', 'z'])
     for i in GT_pose:
         writer.writerow(i)
     f.close()
