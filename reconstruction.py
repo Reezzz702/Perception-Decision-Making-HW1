@@ -13,33 +13,44 @@ from argparse import ArgumentParser
 
 SIZE = 512
 fov = 90 / 180 * np.pi
-focal_length = SIZE / (2 * np.tan(fov / 2.))
+f = SIZE / (2 * np.tan(fov / 2.))
 depth_scale = 1000
-
+K = np.array([[f, 0, SIZE/2],
+              [0, f, SIZE/2],
+              [0, 0, 1]])
+K_inverse = np.linalg.inv(K)
 
 def transform_depth(image):
     img = np.asarray(image, dtype = np.float32)
-    depth_img = (img / 255 * 10 * depth_scale)
+    depth_img = (img / 255 * 10)
     depth_img = o3d.geometry.Image(depth_img)
     return depth_img
 
 def depth_to_point_cloud(rgb, depth):
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth, convert_rgb_to_intensity=False)
+    rgb_img = np.asarray(rgb)
+    rgb_img = rgb_img / 255
+    depth_img = np.asarray(depth)
     
-    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image,
-            o3d.camera.PinholeCameraIntrinsic(SIZE, SIZE, focal_length, focal_length, SIZE/2, SIZE/2))
+    color_list = []
+    point_list = []
+    for u in range(512):
+        for v in range(512):
+            color_list.append(rgb_img[u, v][:])
+            p = np.vstack((v, u, 1))
+            local_coor = K_inverse @ p * depth_img[u, v]
+            point_list.append(local_coor)
+    pcd = o3d.geometry.PointCloud(
+        points=o3d.utility.Vector3dVector(point_list)
+    )
+    pcd.colors = o3d.utility.Vector3dVector(color_list)
+
+    # rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth, convert_rgb_to_intensity=False)
+    # pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image,
+    #         o3d.camera.PinholeCameraIntrinsic(SIZE, SIZE, f, f, SIZE/2, SIZE/2))
 
     pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-    return pcd
     # o3d.visualization.draw_geometries([pcd])
-
-def draw_registration_result(source, target, transformation):
-    source_temp = copy.deepcopy(source)
-    target_temp = copy.deepcopy(target)
-    source_temp.paint_uniform_color([1, 0.706, 0])
-    target_temp.paint_uniform_color([0, 0.651, 0.929])
-    source_temp.transform(transformation)
-    o3d.visualization.draw_geometries([source_temp, target_temp])
+    return pcd
 
 def preprocess_point_cloud(pcd, voxel_size):
     # print(":: Downsample with a voxel size %.3f." % voxel_size)
@@ -152,7 +163,7 @@ def nearest_neighbor(src, dst):
     return distances, indecies
 
 
-def ICP(source, target, init_pose=None, max_iterations=25, tolerance=0.001):
+def ICP(source, target, max_iterations=25, voxel_size=1):
     '''
     The Iterative Closest Point method
     Input:
@@ -164,7 +175,7 @@ def ICP(source, target, init_pose=None, max_iterations=25, tolerance=0.001):
     Output:
         T: final homogeneous transformation
     '''
-
+    tolerance = voxel_size * 0.4
     # make points homogeneous, copy them so as to maintain the originals
     src = np.ones((4,source.shape[0]))
     dst = np.ones((4,target.shape[0]))
@@ -172,8 +183,7 @@ def ICP(source, target, init_pose=None, max_iterations=25, tolerance=0.001):
     dst[0:3,:] = np.copy(target.T)
 
     # apply the initial pose estimation
-    if init_pose is not None:
-        src = np.dot(init_pose, src)
+    # src = np.dot(init_pose, src)
 
     for i in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
@@ -236,35 +246,74 @@ def main(args):
 
     transformation_seq = []
     whole_scene_pcd = o3d.geometry.PointCloud()
+    prev_pcd_down = None
+    prev_pcd_fpfh = None
     for i in tqdm(range(data_size-1)):
-        target_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i}.png")
-        target_depth = transform_depth(o3d.io.read_image(f"data/task2/depth/depth_{i}.png"))
+        if i == 0:
+            target_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i}.png")
+            target_depth = transform_depth(o3d.io.read_image(f"data/task2/depth/depth_{i}.png"))
             
-        source_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i + 1}.png")
-        source_depth = transform_depth(o3d.io.read_image(f"data/task2/depth/depth_{i + 1}.png"))
+            source_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i + 1}.png")
+            source_depth = transform_depth(o3d.io.read_image(f"data/task2/depth/depth_{i + 1}.png"))
+            
+            target_pcd = depth_to_point_cloud(target_rgb, target_depth)
+            source_pcd = depth_to_point_cloud(source_rgb, source_depth)
 
+            if args.icp == "own":
+                # filter far points
+                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(target_pcd, voxel_size)
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(source_pcd, voxel_size)
 
-        target_pcd = depth_to_point_cloud(target_rgb, target_depth)
-        source_pcd = depth_to_point_cloud(source_rgb, source_depth)
+                target_points = np.asarray(target_pcd_down.points)
+                # target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
+                source_points = np.asarray(source_pcd_down.points)
+                # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
 
-        target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(target_pcd, voxel_size)
-        source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(source_pcd, voxel_size)
+            else:
+                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(target_pcd, voxel_size)
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(source_pcd, voxel_size)
+
+        else:
+            source_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i + 1}.png")
+            source_depth = transform_depth(o3d.io.read_image(f"data/task2/depth/depth_{i + 1}.png"))
+            source_pcd = depth_to_point_cloud(source_rgb, source_depth)
+
+            if args.icp == "own":
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(source_pcd, voxel_size)
+                source_points = np.asarray(source_pcd_down.points)
+                # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+            else:
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(source_pcd, voxel_size)
+
+            target_pcd_down = copy.deepcopy(prev_pcd_down)
+            target_pcd_fpfh = copy.deepcopy(prev_pcd_fpfh)
+        
+        # o3d.visualization.draw_geometries([source_pcd_down])
+
 
         result_ransac = execute_global_registration(source_pcd_down, target_pcd_down,
                                                 source_pcd_fpfh, target_pcd_fpfh,
                                                 voxel_size)
+
         
+        # print(result_ransac.transformation)
         # get local icp transformation
         if args.icp == "open3d":
             result_icp = refine_registration(source_pcd_down, target_pcd_down, source_pcd_fpfh, target_pcd_fpfh,
                                          voxel_size, result_ransac.transformation)
             result_transformation = result_icp.transformation
         elif args.icp == "own":
-            result_transformation = ICP(np.asarray(source_pcd_down.points), np.asarray(target_pcd_down.points), init_pose=result_ransac.transformation)
+                temp_pcd = o3d.geometry.PointCloud(
+                        points=source_pcd_down.points
+                    )
+                temp_pcd.transform(result_ransac.transformation)
+                local_transformation = ICP(np.asarray(temp_pcd.points), np.asarray(target_pcd_down.points))
+                result_transformation = local_transformation @ result_ransac.transformation
         else:
             print("unknown icp strategy")
             return
 
+        result_transformation = result_ransac.transformation
         if i == 0:
             points = np.asarray(target_pcd.points)
             target_pcd = target_pcd.select_by_index(np.where(points[:,1] < 0.5)[0])
@@ -282,8 +331,11 @@ def main(args):
         source_pcd = source_pcd.select_by_index(np.where(points[:,1] < 0.5)[0])
         whole_scene_pcd += source_pcd
 
+        prev_pcd_down = copy.deepcopy(source_pcd_down)
+        prev_pcd_fpfh = copy.deepcopy(source_pcd_fpfh)
+
     # record reconstructed poses
-    reconstruct_pose = []
+    reconstruct_pose = [[0,0,0]]
     reconstruct_link = []
     for i, t in enumerate(transformation_seq):
         translation = [t[0, -1], t[1, -1], t[2, -1]]
@@ -300,7 +352,7 @@ def main(args):
     reconstruct_line_set.colors = o3d.utility.Vector3dVector(colors)
 
     # show result
-    o3d.visualization.draw_geometries([whole_scene_pcd, reconstruct_line_set ,GT_line_set])
+    o3d.visualization.draw_geometries([whole_scene_pcd, reconstruct_line_set, GT_line_set])
 
 
 if __name__ == '__main__':
