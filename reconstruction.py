@@ -324,12 +324,15 @@ def main(args):
         else:
             cur_transformation = transformation_seq[-1] @ result_transformation
 
-        source_pcd.transform(cur_transformation)
+        points = np.asarray(source_pcd.points)
+        no_ceil_source_pcd = source_pcd.select_by_index(np.where(points[:,1] < 0.5)[0])
+
+        no_ceil_source_pcd.transform(cur_transformation)
         transformation_seq.append(cur_transformation)
 
-        points = np.asarray(source_pcd.points)
-        source_pcd = source_pcd.select_by_index(np.where(points[:,1] < 0.5)[0])
-        whole_scene_pcd += source_pcd
+        # points = np.asarray(source_pcd.points)
+        # source_pcd = source_pcd.select_by_index(np.where(points[:,1] < 0.5)[0])
+        whole_scene_pcd += no_ceil_source_pcd
 
         prev_pcd_down = copy.deepcopy(source_pcd_down)
         prev_pcd_fpfh = copy.deepcopy(source_pcd_fpfh)

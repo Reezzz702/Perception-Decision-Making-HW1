@@ -6,6 +6,8 @@ from habitat_sim.utils.common import d3_40_colors_rgb
 import cv2
 import os
 import csv
+from argparse import ArgumentParser
+
 
 
 # This is the scene we are going to load.
@@ -94,40 +96,9 @@ def make_simple_cfg(settings):
     return habitat_sim.Configuration(sim_cfg, [agent_cfg])
 
 
-cfg = make_simple_cfg(sim_settings)
-sim = habitat_sim.Simulator(cfg)
 
 
-# initialize an agent
-agent = sim.initialize_agent(sim_settings["default_agent"])
-
-# Set agent state
-agent_state = habitat_sim.AgentState()
-agent_state.position = np.array([0.0, 0.0, 0.0])  # agent in world space
-agent.set_state(agent_state)
-
-# obtain the default, discrete actions that an agent can perform
-# default action space contains 3 actions: move_forward, turn_left, and turn_right
-action_names = list(cfg.agents[sim_settings["default_agent"]].action_space.keys())
-print("Discrete action space: ", action_names)
-
-
-FORWARD_KEY="w"
-LEFT_KEY="a"
-RIGHT_KEY="d"
-FINISH="f"
-print("#############################")
-print("use keyboard to control the agent")
-print(" w for go forward  ")
-print(" a for turn left  ")
-print(" d for trun right  ")
-print(" f for finish and quit the program")
-print("#############################")
-
-count = 0
-GT_pose = []
-
-def navigateAndSee(action=""):
+def navigateAndSee(action="", args=None):
     global count, GT_pose
     observations = sim.step(action)
     #print("action: ", action)
@@ -139,59 +110,97 @@ def navigateAndSee(action=""):
     sensor_state = agent_state.sensor_states['color_sensor']
     print("camera pose: x y z rw rx ry rz")
     print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2],  sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
-    cv2.imwrite(f"data/task2/rgb/rgb_{count}.png", transform_rgb_bgr(observations["color_sensor"]))
-    cv2.imwrite(f"data/task2/depth/depth_{count}.png", transform_depth(observations["depth_sensor"]))
-    cv2.imwrite(f"data/task2/semantic/semantic_{count}.png", transform_semantic(observations["semantic_sensor"]))
+    cv2.imwrite(f"data/task2/floor" + str(args.floor) + "/rgb/rgb_{count}.png", transform_rgb_bgr(observations["color_sensor"]))
+    cv2.imwrite(f"data/task2/floor" + str(args.floor) + "/depth/depth_{count}.png", transform_depth(observations["depth_sensor"]))
+    cv2.imwrite(f"data/task2/floor" + str(args.floor) + "/semantic/semantic_{count}.png", transform_semantic(observations["semantic_sensor"]))
     count += 1
 
     pos = [sensor_state.position[0],sensor_state.position[1],sensor_state.position[2]]
     GT_pose.append(pos)
 
+def main(args):
+    if not os.path.exists("data/"):
+        os.makedirs("data/")
+        os.makedirs("data/task2")
+        os.makedirs("data/task2/floor" + str(args.floor))
+        os.makedirs("data/task2/floor" + str(args.floor) + "/GT")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/rgb")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/depth")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/semantic")
 
-if not os.path.exists("data/"):
-    os.makedirs("data/")
-    os.makedirs("data/task2")
-    os.makedirs("data/task2/GT")
-    os.makedirs("data/task2/rgb")
-    os.makedirs("data/task2/depth")
-    os.makedirs("data/task2/semantic")
+    if not os.path.exists('data/task2'):
+        os.makedirs("data/task2/floor" + str(args.floor))
+        os.makedirs("data/task2/floor" + str(args.floor) + "/GT")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/rgb")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/depth")
+        os.makedirs("data/task2/floor" + str(args.floor) + "/semantic")    
 
-if not os.path.exists('data/task2'):
-    os.makedirs("data/task2")
-    os.makedirs("data/task2/GT")
-    os.makedirs("data/task2/rgb")
-    os.makedirs("data/task2/depth")
-    os.makedirs("data/task2/semantic")    
+    action = "move_forward"
+    navigateAndSee(action, args)
 
-action = "move_forward"
-navigateAndSee(action)
+    while True:
+        keystroke = cv2.waitKey(0)
+        if keystroke == ord(FORWARD_KEY):
+            action = "move_forward"
+            navigateAndSee(action, args)
+            print("action: FORWARD")
+        elif keystroke == ord(LEFT_KEY):
+            action = "turn_left"
+            navigateAndSee(action, args)
+            print("action: LEFT")
+        elif keystroke == ord(RIGHT_KEY):
+            action = "turn_right"
+            navigateAndSee(action, args)
+            print("action: RIGHT")
+        elif keystroke == ord(FINISH):
+            print("action: FINISH")
+            break
+        else:
+            print("INVALID KEY")
+            continue
 
-while True:
-    keystroke = cv2.waitKey(0)
-    if keystroke == ord(FORWARD_KEY):
-        action = "move_forward"
-        navigateAndSee(action)
-        print("action: FORWARD")
-    elif keystroke == ord(LEFT_KEY):
-        action = "turn_left"
-        navigateAndSee(action)
-        print("action: LEFT")
-    elif keystroke == ord(RIGHT_KEY):
-        action = "turn_right"
-        navigateAndSee(action)
-        print("action: RIGHT")
-    elif keystroke == ord(FINISH):
-        print("action: FINISH")
-        break
-    else:
-        print("INVALID KEY")
-        continue
+    print(GT_pose[0])
+    with open("data/task2/floor" + str(args.floor) + "/GT/GT.csv", 'w', newline = '') as f:
+        writer = csv.writer(f)
+        writer.writerow(['x', 'y', 'z'])
+        for i in GT_pose:
+            writer.writerow(i)
+        f.close()
+
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument("-f", dest="floor", help="select floor: [0, 1]", type=int)
+    
+    cfg = make_simple_cfg(sim_settings)
+    sim = habitat_sim.Simulator(cfg)
 
 
-print(GT_pose[0])
-with open("data/task2/GT/GT.csv", 'w', newline = '') as f:
-    writer = csv.writer(f)
-    writer.writerow(['x', 'y', 'z'])
-    for i in GT_pose:
-        writer.writerow(i)
-    f.close()
+    # initialize an agent
+    agent = sim.initialize_agent(sim_settings["default_agent"])
+
+    # Set agent state
+    agent_state = habitat_sim.AgentState()
+    agent_state.position = np.array([0.0, float(parser.parse_args().floor), 0.0])  # agent in world space
+    agent.set_state(agent_state)
+
+    # obtain the default, discrete actions that an agent can perform
+    # default action space contains 3 actions: move_forward, turn_left, and turn_right
+    action_names = list(cfg.agents[sim_settings["default_agent"]].action_space.keys())
+    print("Discrete action space: ", action_names)
+
+
+    FORWARD_KEY="w"
+    LEFT_KEY="a"
+    RIGHT_KEY="d"
+    FINISH="f"
+    print("#############################")
+    print("use keyboard to control the agent")
+    print(" w for go forward  ")
+    print(" a for turn left  ")
+    print(" d for trun right  ")
+    print(" f for finish and quit the program")
+    print("#############################")
+
+    count = 0
+    GT_pose = []
+    main(parser.parse_args())

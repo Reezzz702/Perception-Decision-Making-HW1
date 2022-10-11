@@ -96,9 +96,9 @@ if __name__ == "__main__":
 
 
     pitch_ang = -90
-    for i in range(3):
-        front_rgb = "data/task1/front_view_" + str(i+1) + ".png"
-        top_rgb = "data/task1/bev_view_" + str(i+1) +".png"
+    for i in range(2):
+        front_rgb = "data/task1/front_view_" + str(i) + ".png"
+        top_rgb = "data/task1/bev_view_" + str(i) +".png"
         # click the pixels on window
         img = cv2.imread(top_rgb, 1)
         cv2.imshow('image', img)
