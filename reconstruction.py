@@ -150,19 +150,10 @@ def nearest_neighbor(src, dst):
         indecies: dst indecies of the nearest neighbor
     """
     # print(src.shape[0])
-    indecies = np.zeros(src.shape[0], dtype=np.int)
     distances = np.zeros(src.shape[0])
     nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(src)
     distances, indices = nbrs.kneighbors(dst)
-    # for i, s in enumerate(src):
-    #     min_dist = np.inf
-    #     for j, d in enumerate(dst):
-    #         dist = np.linalg.norm(s - d)
-    #         if dist < min_dist:
-    #             min_dist = dist
-    #             indecies[i] = j
-    #             distances[i] = dist
-    return distances, indecies
+    return distances, indices
 
 
 def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
