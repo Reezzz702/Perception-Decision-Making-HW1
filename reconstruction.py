@@ -6,6 +6,8 @@ import open3d as o3d
 import copy
 from tqdm import tqdm
 from argparse import ArgumentParser
+from sklearn.neighbors import NearestNeighbors
+
 
 SIZE = 512
 fov = 90 / 180 * np.pi
@@ -23,22 +25,24 @@ def transform_depth(image):
 
 
 def depth_to_point_cloud(rgb, depth):
-    rgb_img = np.asarray(rgb)
-    rgb_img = rgb_img / 255
-    depth_img = np.asarray(depth)
-
-    color_list = []
-    point_list = []
-    for u in range(512):
-        for v in range(512):
-            color_list.append(rgb_img[u, v][:])
-            p = np.vstack((v, u, 1))
-            local_coor = K_inverse @ p * depth_img[u, v]
-            point_list.append(local_coor)
-    pcd = o3d.geometry.PointCloud(points=o3d.utility.Vector3dVector(point_list))
-    pcd.colors = o3d.utility.Vector3dVector(color_list)
-
-    pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+    colors = np.zeros((512*512, 3))
+    points = np.zeros((512*512, 3))
+    u = np.array([range(512)]*512).reshape(512,512) - 256
+    v = np.array([[i]*512 for i in range(512)]).reshape(512,512) - 256
+    z = np.asarray(depth)
+    colors = (np.asarray(rgb)/255).reshape(512*512, 3)
+    points[:, 0] = (u * z / f).reshape(512*512)
+    points[:, 1] = (v * z / f).reshape(512*512)
+    points[:, 2] = z.reshape(512*512)
+    pcd = o3d.geometry.PointCloud()
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    pcd.points = o3d.utility.Vector3dVector(points)
+    pcd = pcd.select_by_index(np.where(points[:, 2] != 0)[0])
+    pcd.transform(np.array(([[1, 0, 0, 0],
+                            [0, -1, 0, 0],
+                            [0, 0, -1, 0],
+                            [0, 0, 0, 1]])))
+    #o3d.visualization.draw_geometries([pcd])
     return pcd
 
 
@@ -148,18 +152,20 @@ def nearest_neighbor(src, dst):
     # print(src.shape[0])
     indecies = np.zeros(src.shape[0], dtype=np.int)
     distances = np.zeros(src.shape[0])
-    for i, s in enumerate(src):
-        min_dist = np.inf
-        for j, d in enumerate(dst):
-            dist = np.linalg.norm(s - d)
-            if dist < min_dist:
-                min_dist = dist
-                indecies[i] = j
-                distances[i] = dist
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(src)
+    distances, indices = nbrs.kneighbors(dst)
+    # for i, s in enumerate(src):
+    #     min_dist = np.inf
+    #     for j, d in enumerate(dst):
+    #         dist = np.linalg.norm(s - d)
+    #         if dist < min_dist:
+    #             min_dist = dist
+    #             indecies[i] = j
+    #             distances[i] = dist
     return distances, indecies
 
 
-def ICP(source, target, max_iterations=25, voxel_size=1):
+def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
     """
     The Iterative Closest Point method
     Input:
@@ -179,7 +185,7 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
     dst[0:3, :] = np.copy(target.T)
 
     # apply the initial pose estimation
-    # src = np.dot(init_pose, src)
+    src = np.dot(init_pose, src)
 
     for _ in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
@@ -192,8 +198,10 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
         src = np.dot(T, src)
 
         # check error
-        mean_error = np.sum(distances) / distances.size
+        mean_error = np.mean(distances)
+        # print(mean_error)
         if abs(mean_error) < tolerance:
+            print("early stop")
             break
 
     # calculcate final transformation
@@ -205,11 +213,11 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
 def main(args):
     # parameters
     voxel_size = args.voxel_size
-    data_size = len(os.listdir("data/task2/depth"))
+    data_size = len(os.listdir(f"data/task2/floor{args.floor}/depth"))
 
     GT_pose = []
     GT_link = []
-    with open("data/task2/GT/GT.csv", "r") as f:
+    with open(f"data/task2/floor{args.floor}/GT/GT.csv", "r") as f:
         csvreader = csv.reader(f)
         next(csvreader)
         first_row = next(csvreader)
@@ -245,14 +253,14 @@ def main(args):
     prev_pcd_fpfh = None
     for i in tqdm(range(data_size - 1)):
         if i == 0:
-            target_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i}.png")
+            target_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i}.png")
             target_depth = transform_depth(
-                o3d.io.read_image(f"data/task2/depth/depth_{i}.png")
+                o3d.io.read_image(f"data/task2/floor{args.floor}/depth/depth_{i}.png")
             )
-
-            source_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i + 1}.png")
+            
+            source_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i + 1}.png")
             source_depth = transform_depth(
-                o3d.io.read_image(f"data/task2/depth/depth_{i + 1}.png")
+                o3d.io.read_image(f"data/task2/floor{args.floor}/depth/depth_{i + 1}.png")
             )
 
             target_pcd = depth_to_point_cloud(target_rgb, target_depth)
@@ -273,9 +281,9 @@ def main(args):
                 )
 
                 target_points = np.asarray(target_pcd_down.points)
-                # target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
+                target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
                 source_points = np.asarray(source_pcd_down.points)
-                # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
 
             else:
                 target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
@@ -286,18 +294,20 @@ def main(args):
                 )
 
         else:
-            source_rgb = o3d.io.read_image(f"data/task2/rgb/rgb_{i + 1}.png")
+            source_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i + 1}.png")
             source_depth = transform_depth(
-                o3d.io.read_image(f"data/task2/depth/depth_{i + 1}.png")
+                o3d.io.read_image(f"data/task2/floor{args.floor}/depth/depth_{i + 1}.png")
             )
             source_pcd = depth_to_point_cloud(source_rgb, source_depth)
+            source_points = np.asarray(source_pcd.points)
+            source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
             if args.icp == "own":
                 source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
                     source_pcd, voxel_size
                 )
                 source_points = np.asarray(source_pcd_down.points)
-                # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
             else:
                 source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
                     source_pcd, voxel_size
@@ -317,7 +327,6 @@ def main(args):
             target_pcd_fpfh,
             voxel_size,
         )
-
         # print(result_ransac.transformation)
         # get local icp transformation
         if args.icp == "open3d":
@@ -330,12 +339,17 @@ def main(args):
                 result_ransac.transformation,
             )
             result_transformation = result_icp.transformation
+            # source_pcd.transform(result_transformation)
         elif args.icp == "own":
             # do gobal registration first
-            source_pcd.transform(result_ransac.transformation)
+            # source_pcd_down.transform(result_ransac.transformation)
+            # source_pcd.transform(result_ransac.transformation)
             result_transformation = ICP(
-                np.asarray(source_pcd.points), np.asarray(target_pcd_down.points)
+                np.asarray(source_pcd_down.points), np.asarray(target_pcd_down.points), init_pose = result_ransac.transformation, voxel_size = voxel_size
             )
+            # source_pcd.transform(local_transformation)
+            # result_transformation = local_transformation @ result_ransac.transformation
+
         else:
             print("unknown icp strategy")
             return
@@ -349,7 +363,7 @@ def main(args):
         source_pcd.transform(cur_transformation)
         transformation_seq.append(cur_transformation)
         whole_scene_pcd += source_pcd
-
+        
     # record reconstructed poses
     reconstruct_pose = [[0, 0, 0]]
     reconstruct_link = []
@@ -359,6 +373,7 @@ def main(args):
         reconstruct_link.append([i, i + 1])
     reconstruct_link.pop(-1)
 
+    
     # create reconstructed lineset
     colors = [[1, 0, 0] for _ in range(len(reconstruct_link))]
     reconstruct_line_set = o3d.geometry.LineSet(
@@ -366,11 +381,16 @@ def main(args):
         lines=o3d.utility.Vector2iVector(reconstruct_link),
     )
     reconstruct_line_set.colors = o3d.utility.Vector3dVector(colors)
-
+    
     # show result
     o3d.visualization.draw_geometries(
         [whole_scene_pcd, reconstruct_line_set, GT_line_set]
     )
+
+    # calculate mean L2 norm
+    GT = np.asarray(GT_pose)
+    reconstruct = np.asarray(reconstruct_pose)
+    print(np.mean(np.linalg.norm(GT - reconstruct, axis = 1)))
 
 
 if __name__ == "__main__":
@@ -379,5 +399,5 @@ if __name__ == "__main__":
         "-i", dest="icp", help="select ipc strategy: [open3d, own]", type=str
     )
     parser.add_argument("-v", dest="voxel_size", help="voxel size", type=float)
-
+    parser.add_argument("-f", dest="floor", help="select floor: [0, 1]", type=int)
     main(parser.parse_args())
