@@ -107,9 +107,7 @@ def best_fit_transform(A, B):
       R: 3x3 rotation matrix
       t: 3x1 column vector
     """
-
     assert len(A) == len(B)
-
     # translate points to their centroids
     centroid_A = np.mean(A, axis=0)
     centroid_B = np.mean(B, axis=0)
@@ -183,7 +181,7 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
     # apply the initial pose estimation
     # src = np.dot(init_pose, src)
 
-    for i in range(max_iterations):
+    for _ in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
         distances, indices = nearest_neighbor(src[0:3, :].T, dst[0:3, :].T)
 
@@ -234,7 +232,7 @@ def main(args):
         f.close()
 
     # create GT lineset
-    colors = [[0, 0, 0] for i in range(len(GT_link))]
+    colors = [[0, 0, 0] for _ in range(len(GT_link))]
     GT_line_set = o3d.geometry.LineSet(
         points=o3d.utility.Vector3dVector(GT_pose),
         lines=o3d.utility.Vector2iVector(GT_link),
@@ -362,7 +360,7 @@ def main(args):
     reconstruct_link.pop(-1)
 
     # create reconstructed lineset
-    colors = [[1, 0, 0] for i in range(len(reconstruct_link))]
+    colors = [[1, 0, 0] for _ in range(len(reconstruct_link))]
     reconstruct_line_set = o3d.geometry.LineSet(
         points=o3d.utility.Vector3dVector(reconstruct_pose),
         lines=o3d.utility.Vector2iVector(reconstruct_link),

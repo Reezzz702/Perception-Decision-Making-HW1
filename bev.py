@@ -34,7 +34,6 @@ class Projection(object):
             p = np.vstack((p[0], p[1], 1))
             BEV_coor = K_inverse @ p * 2.5
             BEV_coor = np.vstack((BEV_coor, 1))
-
             front_coor = T @ BEV_coor
             front_coor = K @ front_coor
             front_coor /= front_coor[2]
