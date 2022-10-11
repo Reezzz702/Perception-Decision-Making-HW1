@@ -6,6 +6,8 @@ import open3d as o3d
 import copy
 from tqdm import tqdm
 from argparse import ArgumentParser
+from sklearn.neighbors import NearestNeighbors
+
 
 SIZE = 512
 fov = 90 / 180 * np.pi
@@ -152,18 +154,20 @@ def nearest_neighbor(src, dst):
     # print(src.shape[0])
     indecies = np.zeros(src.shape[0], dtype=np.int)
     distances = np.zeros(src.shape[0])
-    for i, s in enumerate(src):
-        min_dist = np.inf
-        for j, d in enumerate(dst):
-            dist = np.linalg.norm(s - d)
-            if dist < min_dist:
-                min_dist = dist
-                indecies[i] = j
-                distances[i] = dist
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(src)
+    distances, indices = nbrs.kneighbors(dst)
+    # for i, s in enumerate(src):
+    #     min_dist = np.inf
+    #     for j, d in enumerate(dst):
+    #         dist = np.linalg.norm(s - d)
+    #         if dist < min_dist:
+    #             min_dist = dist
+    #             indecies[i] = j
+    #             distances[i] = dist
     return distances, indecies
 
 
-def ICP(source, target, max_iterations=25, voxel_size=1):
+def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
     """
     The Iterative Closest Point method
     Input:
@@ -183,7 +187,7 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
     dst[0:3, :] = np.copy(target.T)
 
     # apply the initial pose estimation
-    # src = np.dot(init_pose, src)
+    src = np.dot(init_pose, src)
 
     for i in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
@@ -196,8 +200,10 @@ def ICP(source, target, max_iterations=25, voxel_size=1):
         src = np.dot(T, src)
 
         # check error
-        mean_error = np.sum(distances) / distances.size
+        mean_error = np.mean(distances)
+        # print(mean_error)
         if abs(mean_error) < tolerance:
+            print("early stop")
             break
 
     # calculcate final transformation
@@ -247,7 +253,7 @@ def main(args):
     whole_scene_pcd = o3d.geometry.PointCloud()
     prev_pcd_down = None
     prev_pcd_fpfh = None
-    for i in tqdm(range(50 - 1)):
+    for i in tqdm(range(data_size - 1)):
         if i == 0:
             target_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i}.png")
             target_depth = transform_depth(
@@ -267,27 +273,27 @@ def main(args):
             source_points = np.asarray(source_pcd.points)
             source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
-            # if args.icp == "own":
-            #     # filter far points
-            #     target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
-            #         target_pcd, voxel_size
-            #     )
-            #     source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-            #         source_pcd, voxel_size
-            #     )
+            if args.icp == "own":
+                # filter far points
+                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
+                    target_pcd, voxel_size
+                )
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                    source_pcd, voxel_size
+                )
 
-            #     target_points = np.asarray(target_pcd_down.points)
-            #     # target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
-            #     source_points = np.asarray(source_pcd_down.points)
-            #     # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+                target_points = np.asarray(target_pcd_down.points)
+                target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
+                source_points = np.asarray(source_pcd_down.points)
+                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
 
-            # else:
-            target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
-                target_pcd, voxel_size
-            )
-            source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                source_pcd, voxel_size
-            )
+            else:
+                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
+                    target_pcd, voxel_size
+                )
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                    source_pcd, voxel_size
+                )
 
         else:
             source_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i + 1}.png")
@@ -298,16 +304,16 @@ def main(args):
             source_points = np.asarray(source_pcd.points)
             source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
-            # if args.icp == "own":
-            #     source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-            #         source_pcd, voxel_size
-            #     )
-            #     source_points = np.asarray(source_pcd_down.points)
-            #     # source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
-            # else:
-            source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                source_pcd, voxel_size
-            )
+            if args.icp == "own":
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                    source_pcd, voxel_size
+                )
+                source_points = np.asarray(source_pcd_down.points)
+                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+            else:
+                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                    source_pcd, voxel_size
+                )
 
             target_pcd_down = copy.deepcopy(prev_pcd_down)
             target_pcd_fpfh = copy.deepcopy(prev_pcd_fpfh)
@@ -335,13 +341,17 @@ def main(args):
                 result_ransac.transformation,
             )
             result_transformation = result_icp.transformation
+            # source_pcd.transform(result_transformation)
         elif args.icp == "own":
             # do gobal registration first
-            source_pcd_down.transform(result_ransac.transformation)
-            source_pcd.transform(result_ransac.transformation)
+            # source_pcd_down.transform(result_ransac.transformation)
+            # source_pcd.transform(result_ransac.transformation)
             result_transformation = ICP(
-                np.asarray(source_pcd_down.points), np.asarray(target_pcd_down.points), voxel_size = voxel_size
+                np.asarray(source_pcd_down.points), np.asarray(target_pcd_down.points), init_pose = result_ransac.transformation, voxel_size = voxel_size
             )
+            # source_pcd.transform(local_transformation)
+            # result_transformation = local_transformation @ result_ransac.transformation
+
         else:
             print("unknown icp strategy")
             return
@@ -352,7 +362,7 @@ def main(args):
         else:
             cur_transformation = transformation_seq[-1] @ result_transformation
 
-        # source_pcd.transform(cur_transformation)
+        source_pcd.transform(cur_transformation)
         transformation_seq.append(cur_transformation)
         whole_scene_pcd += source_pcd
         
@@ -365,9 +375,7 @@ def main(args):
         reconstruct_link.append([i, i + 1])
     reconstruct_link.pop(-1)
 
-    GT = np.asarray(GT_pose)
-    reconstruct = np.asarray(reconstruct_pose)
-    print(np.mean(np.linalg.norm(GT - reconstruct, axis = 1)))
+    
     # create reconstructed lineset
     colors = [[1, 0, 0] for i in range(len(reconstruct_link))]
     reconstruct_line_set = o3d.geometry.LineSet(
@@ -380,6 +388,11 @@ def main(args):
     o3d.visualization.draw_geometries(
         [whole_scene_pcd, reconstruct_line_set, GT_line_set]
     )
+
+    # calculate mean L2 norm
+    GT = np.asarray(GT_pose)
+    reconstruct = np.asarray(reconstruct_pose)
+    print(np.mean(np.linalg.norm(GT - reconstruct, axis = 1)))
 
 
 if __name__ == "__main__":
