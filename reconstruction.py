@@ -258,7 +258,12 @@ def main(args):
             )
 
             target_pcd = depth_to_point_cloud(target_rgb, target_depth)
+            target_points = np.asarray(target_pcd.points)
+            target_pcd = target_pcd.select_by_index(np.where(target_points[:, 1] < 0.5)[0])
+
             source_pcd = depth_to_point_cloud(source_rgb, source_depth)
+            source_points = np.asarray(source_pcd.points)
+            source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
             if args.icp == "own":
                 # filter far points
@@ -303,6 +308,8 @@ def main(args):
             target_pcd_down = copy.deepcopy(prev_pcd_down)
             target_pcd_fpfh = copy.deepcopy(prev_pcd_fpfh)
 
+        prev_pcd_down = copy.deepcopy(source_pcd_down)
+        prev_pcd_fpfh = copy.deepcopy(source_pcd_fpfh)
         # o3d.visualization.draw_geometries([source_pcd_down])
 
         result_ransac = execute_global_registration(
@@ -326,36 +333,24 @@ def main(args):
             )
             result_transformation = result_icp.transformation
         elif args.icp == "own":
-            temp_pcd = o3d.geometry.PointCloud(points=source_pcd_down.points)
-            temp_pcd.transform(result_ransac.transformation)
-            local_transformation = ICP(
-                np.asarray(temp_pcd.points), np.asarray(target_pcd_down.points)
+            # do gobal registration first
+            source_pcd.transform(result_ransac.transformation)
+            result_transformation = ICP(
+                np.asarray(source_pcd.points), np.asarray(target_pcd_down.points)
             )
-            result_transformation = local_transformation @ result_ransac.transformation
         else:
             print("unknown icp strategy")
             return
 
-        result_transformation = result_ransac.transformation
         if i == 0:
-            points = np.asarray(target_pcd.points)
-            target_pcd = target_pcd.select_by_index(np.where(points[:, 1] < 0.5)[0])
             whole_scene_pcd += target_pcd
-
-        if not transformation_seq:
             cur_transformation = result_transformation
         else:
             cur_transformation = transformation_seq[-1] @ result_transformation
 
         source_pcd.transform(cur_transformation)
         transformation_seq.append(cur_transformation)
-
-        points = np.asarray(source_pcd.points)
-        source_pcd = source_pcd.select_by_index(np.where(points[:, 1] < 0.5)[0])
         whole_scene_pcd += source_pcd
-
-        prev_pcd_down = copy.deepcopy(source_pcd_down)
-        prev_pcd_fpfh = copy.deepcopy(source_pcd_fpfh)
 
     # record reconstructed poses
     reconstruct_pose = [[0, 0, 0]]
