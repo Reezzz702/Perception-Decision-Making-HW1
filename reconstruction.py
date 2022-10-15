@@ -111,6 +111,8 @@ def best_fit_transform(A, B):
       R: 3x3 rotation matrix
       t: 3x1 column vector
     """
+    # print(len(A))
+    # print(len(B))
     assert len(A) == len(B)
     # translate points to their centroids
     centroid_A = np.mean(A, axis=0)
@@ -149,11 +151,10 @@ def nearest_neighbor(src, dst):
         distances: Euclidean distances (errors) of the nearest neighbor
         indecies: dst indecies of the nearest neighbor
     """
-    # print(src.shape[0])
     distances = np.zeros(src.shape[0])
-    nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(src)
-    distances, indices = nbrs.kneighbors(dst)
-    return distances, indices
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(dst)
+    distances, indices = nbrs.kneighbors(src)
+    return distances, list(indices.reshape(-1))
 
 
 def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
@@ -181,7 +182,6 @@ def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
     for _ in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
         distances, indices = nearest_neighbor(src[0:3, :].T, dst[0:3, :].T)
-
         # compute the transformation between the current source and nearest destination points
         T, _, _ = best_fit_transform(src[0:3, :].T, dst[0:3, indices].T)
 
@@ -192,7 +192,7 @@ def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
         mean_error = np.mean(distances)
         # print(mean_error)
         if abs(mean_error) < tolerance:
-            print("early stop")
+            # print("early stop")
             break
 
     # calculcate final transformation
@@ -263,18 +263,12 @@ def main(args):
             source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
             if args.icp == "own":
-                # filter far points
                 target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
                     target_pcd, voxel_size
                 )
                 source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
                     source_pcd, voxel_size
                 )
-
-                target_points = np.asarray(target_pcd_down.points)
-                target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
-                source_points = np.asarray(source_pcd_down.points)
-                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
 
             else:
                 target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
@@ -297,8 +291,7 @@ def main(args):
                 source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
                     source_pcd, voxel_size
                 )
-                source_points = np.asarray(source_pcd_down.points)
-                source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+
             else:
                 source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
                     source_pcd, voxel_size
@@ -318,7 +311,7 @@ def main(args):
             target_pcd_fpfh,
             voxel_size,
         )
-        # print(result_ransac.transformation)
+
         # get local icp transformation
         if args.icp == "open3d":
             result_icp = refine_registration(
@@ -330,16 +323,17 @@ def main(args):
                 result_ransac.transformation,
             )
             result_transformation = result_icp.transformation
-            # source_pcd.transform(result_transformation)
+
         elif args.icp == "own":
-            # do gobal registration first
-            # source_pcd_down.transform(result_ransac.transformation)
-            # source_pcd.transform(result_ransac.transformation)
+            target_points = np.asarray(target_pcd_down.points)
+            target_pcd_down = target_pcd_down.select_by_index(np.where(target_points[:,2] > -2.5)[0])
+            source_points = np.asarray(source_pcd_down.points)
+            source_pcd_down = source_pcd_down.select_by_index(np.where(source_points[:,2] > -2.5)[0])
+                    
             result_transformation = ICP(
                 np.asarray(source_pcd_down.points), np.asarray(target_pcd_down.points), init_pose = result_ransac.transformation, voxel_size = voxel_size
             )
-            # source_pcd.transform(local_transformation)
-            # result_transformation = local_transformation @ result_ransac.transformation
+            # result_transformation = result_ransac.transformation
 
         else:
             print("unknown icp strategy")
