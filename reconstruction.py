@@ -7,6 +7,7 @@ import copy
 from tqdm import tqdm
 from argparse import ArgumentParser
 from sklearn.neighbors import NearestNeighbors
+from scipy.spatial.distance import cdist
 
 
 SIZE = 512
@@ -99,9 +100,8 @@ def refine_registration(
     )
     return result
 
-
 def best_fit_transform(A, B):
-    """
+    '''
     Calculates the least-squares best-fit transform between corresponding 3D points A->B
     Input:
       A: Nx3 numpy array of corresponding 3D points
@@ -110,10 +110,10 @@ def best_fit_transform(A, B):
       T: 4x4 homogeneous transformation matrix
       R: 3x3 rotation matrix
       t: 3x1 column vector
-    """
-    # print(len(A))
-    # print(len(B))
+    '''
+
     assert len(A) == len(B)
+
     # translate points to their centroids
     centroid_A = np.mean(A, axis=0)
     centroid_B = np.mean(B, axis=0)
@@ -121,17 +121,17 @@ def best_fit_transform(A, B):
     BB = B - centroid_B
 
     # rotation matrix
-    W = np.dot(BB.T, AA)
-    U, s, VT = np.linalg.svd(W)
-    R = np.dot(U, VT)
+    H = np.dot(AA.T, BB)
+    U, S, Vt = np.linalg.svd(H)
+    R = np.dot(Vt.T, U.T)
 
     # special reflection case
     if np.linalg.det(R) < 0:
-        VT[2, :] *= -1
-        R = np.dot(U, VT)
+       Vt[2,:] *= -1
+       R = np.dot(Vt.T, U.T)
 
     # translation
-    t = centroid_B.T - np.dot(R, centroid_A.T)
+    t = centroid_B.T - np.dot(R,centroid_A.T)
 
     # homogeneous transformation
     T = np.identity(4)
@@ -140,25 +140,24 @@ def best_fit_transform(A, B):
 
     return T, R, t
 
-
 def nearest_neighbor(src, dst):
-    """
+    '''
     Find the nearest (Euclidean) neighbor in dst for each point in src
     Input:
         src: Nx3 array of points
         dst: Nx3 array of points
     Output:
-        distances: Euclidean distances (errors) of the nearest neighbor
-        indecies: dst indecies of the nearest neighbor
-    """
-    distances = np.zeros(src.shape[0])
-    nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(dst)
-    distances, indices = nbrs.kneighbors(src)
-    return distances, list(indices.reshape(-1))
+        distances: Euclidean distances of the nearest neighbor
+        indices: dst indices of the nearest neighbor
+    '''
 
+    all_dists = cdist(src, dst, 'euclidean')
+    indices = all_dists.argmin(axis=1)
+    distances = all_dists[np.arange(all_dists.shape[0]), indices]
+    return distances, indices
 
-def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
-    """
+def ICP(A, B, init_pose=None, max_iterations=20, voxel_size=0.001):
+    '''
     The Iterative Closest Point method
     Input:
         A: Nx3 numpy array of source 3D points
@@ -168,35 +167,39 @@ def ICP(source, target, init_pose = None, max_iterations=500, voxel_size=1):
         tolerance: convergence criteria
     Output:
         T: final homogeneous transformation
-    """
-    tolerance = voxel_size * 0.4
+        distances: Euclidean distances (errors) of the nearest neighbor
+    '''
+    tolerance = voxel_size * 0.0001
     # make points homogeneous, copy them so as to maintain the originals
-    src = np.ones((4, source.shape[0]))
-    dst = np.ones((4, target.shape[0]))
-    src[0:3, :] = np.copy(source.T)
-    dst[0:3, :] = np.copy(target.T)
+    src = np.ones((4,A.shape[0]))
+    dst = np.ones((4,B.shape[0]))
+    src[0:3,:] = np.copy(A.T)
+    dst[0:3,:] = np.copy(B.T)
 
     # apply the initial pose estimation
-    src = np.dot(init_pose, src)
+    if init_pose is not None:
+        src = np.dot(init_pose, src)
 
-    for _ in range(max_iterations):
+    prev_error = 0
+
+    for i in range(max_iterations):
         # find the nearest neighbours between the current source and destination points
-        distances, indices = nearest_neighbor(src[0:3, :].T, dst[0:3, :].T)
+        distances, indices = nearest_neighbor(src[0:3,:].T, dst[0:3,:].T)
+        threshold = np.mean(distances)
         # compute the transformation between the current source and nearest destination points
-        T, _, _ = best_fit_transform(src[0:3, :].T, dst[0:3, indices].T)
+        T,_,_ = best_fit_transform(src[0:3, np.where(distances < threshold)[0]].T, dst[0:3,indices[np.where(distances < threshold)[0]]].T)
 
         # update the current source
         src = np.dot(T, src)
 
         # check error
-        mean_error = np.mean(distances)
-        # print(mean_error)
-        if abs(mean_error) < tolerance:
-            # print("early stop")
+        mean_error = np.sum(distances) / distances.size
+        if abs(prev_error-mean_error) < tolerance:
             break
+        prev_error = mean_error
 
-    # calculcate final transformation
-    T, _, _ = best_fit_transform(source, src[0:3, :].T)
+    # calculate final transformation
+    T,_,_ = best_fit_transform(A, src[0:3,:].T)
 
     return T
 
@@ -262,21 +265,12 @@ def main(args):
             source_points = np.asarray(source_pcd.points)
             source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
-            if args.icp == "own":
-                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
-                    target_pcd, voxel_size
-                )
-                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                    source_pcd, voxel_size
-                )
-
-            else:
-                target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
-                    target_pcd, voxel_size
-                )
-                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                    source_pcd, voxel_size
-                )
+            target_pcd_down, target_pcd_fpfh = preprocess_point_cloud(
+                target_pcd, voxel_size
+            )
+            source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                source_pcd, voxel_size
+            )
 
         else:
             source_rgb = o3d.io.read_image(f"data/task2/floor{args.floor}/rgb/rgb_{i + 1}.png")
@@ -287,15 +281,9 @@ def main(args):
             source_points = np.asarray(source_pcd.points)
             source_pcd = source_pcd.select_by_index(np.where(source_points[:, 1] < 0.5)[0])
 
-            if args.icp == "own":
-                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                    source_pcd, voxel_size
-                )
-
-            else:
-                source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
-                    source_pcd, voxel_size
-                )
+            source_pcd_down, source_pcd_fpfh = preprocess_point_cloud(
+                source_pcd, voxel_size
+            )
 
             target_pcd_down = copy.deepcopy(prev_pcd_down)
             target_pcd_fpfh = copy.deepcopy(prev_pcd_fpfh)
